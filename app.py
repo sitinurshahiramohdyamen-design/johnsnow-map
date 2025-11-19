@@ -1,4 +1,4 @@
-# app.py (final - HTTPS basemaps, legend, diagnostics, flip, fit_bounds)
+# app.py - Streamlit John Snow Cholera Map, ready for deploy
 import streamlit as st
 import pandas as pd
 import folium
@@ -8,26 +8,22 @@ from branca.element import Template, MacroElement
 
 st.set_page_config(page_title="John Snow Cholera Map", layout="wide")
 st.markdown("# John Snow Cholera Map")
-st.markdown("**Interactive demo:** Upload deaths CSV (required) and pumps CSV (optional). Use Diagnostics to verify lat/lon and flip if needed.")
+st.markdown("**Demo interaktif:** Upload deaths CSV (wajib) dan pumps CSV (opsyenal). Validasi/flip koordinat di sebelah kiri jika perlu.")
 
-# --- Helpers ---
+# Helper cari kolum lat/lon
 def find_latlon_cols(df):
     cols_lower = [c.lower().strip() for c in df.columns]
-    lat_candidates = []
-    lon_candidates = []
+    lat, lon = None, None
     for orig, c in zip(df.columns, cols_lower):
         if c in ("lat", "latitude", "y", "y_coord", "ycoord", "y coordinate", "y_coordinate"):
-            lat_candidates.append(orig)
+            lat = orig
         if c in ("lon", "lng", "long", "longitude", "x", "x_coord", "xcoord", "x coordinate", "x_coordinate"):
-            lon_candidates.append(orig)
-    if not lat_candidates:
-        lat_candidates = [orig for orig, c in zip(df.columns, cols_lower) if "lat" in c or "y coordinate" in c]
-    if not lon_candidates:
-        lon_candidates = [orig for orig, c in zip(df.columns, cols_lower) if "lon" in c or "lng" in c or "long" in c or "x coordinate" in c]
-    lat = lat_candidates[0] if lat_candidates else None
-    lon = lon_candidates[0] if lon_candidates else None
-
-    # numeric heuristic to detect swapped columns
+            lon = orig
+    if not lat:
+        lat = next((orig for orig, c in zip(df.columns, cols_lower) if "lat" in c or "y coordinate" in c), None)
+    if not lon:
+        lon = next((orig for orig, c in zip(df.columns, cols_lower) if "lon" in c or "lng" in c or "long" in c or "x coordinate" in c), None)
+    # Heuristik flip jika lat dan lon tersalah
     if lat and lon:
         try:
             lat_vals = pd.to_numeric(df[lat], errors="coerce").dropna()
@@ -35,14 +31,14 @@ def find_latlon_cols(df):
             if not lat_vals.empty and not lon_vals.empty:
                 lat_in_lat_range = lat_vals.between(-90, 90).mean()
                 lon_in_lon_range = lon_vals.between(-180, 180).mean()
-                lat_in_lon_range = lat_vals.between(-180, 180).mean()
                 lon_in_lat_range = lon_vals.between(-90, 90).mean()
-                if (lat_in_lat_range < 0.6 and lon_in_lat_range > 0.6) or (lat_in_lat_range < lon_in_lat_range and lon_in_lat_range > 0.6):
+                if lat_in_lat_range < 0.6 and lon_in_lat_range > 0.6:
                     return lon, lat
         except Exception:
             pass
     return lat, lon
 
+# Fungsi baca CSV/Excel dengan robust
 def safe_read_csv(uploaded):
     try:
         uploaded.seek(0)
@@ -57,13 +53,13 @@ def safe_read_csv(uploaded):
         except Exception as e:
             raise
 
-# --- UI inputs ---
+# Sidebar upload
 st.sidebar.header("Upload your files")
 death_file = st.sidebar.file_uploader("Upload Death CSV (required)", type=["csv", "xlsx", "xls"])
 pump_file = st.sidebar.file_uploader("Upload Pump CSV (optional)", type=["csv", "xlsx", "xls"])
 use_example = st.sidebar.button("Load example sample")
 
-# Example small dataset (for quick preview)
+# Contoh data jika tiada upload
 if use_example:
     df_death = pd.DataFrame({
         "id": [1,2,3,4,5],
@@ -78,37 +74,35 @@ if use_example:
         "name":["Pump A","Broad St Pump","Pump C"]
     })
 else:
-    df_death = None
-    df_pump = None
+    df_death, df_pump = None, None
     if death_file is not None:
         try:
             df_death = safe_read_csv(death_file)
         except Exception as e:
-            st.sidebar.error(f"Cannot read death file: {e}")
+            st.sidebar.error(f"Gagal baca file death: {e}")
     if pump_file is not None:
         try:
             df_pump = safe_read_csv(pump_file)
         except Exception as e:
-            st.sidebar.error(f"Cannot read pump file: {e}")
+            st.sidebar.error(f"Gagal baca file pump: {e}")
 
 if df_death is None:
-    st.info("Please upload the Death CSV on the left sidebar (or click 'Load example sample').")
+    st.info("Sila upload Death CSV di sidebar kiri (atau klik 'Load example sample').")
     st.stop()
 
-# detect lat/lon
+# Detect kolum lat/lon
 d_lat, d_lon = find_latlon_cols(df_death)
 if not d_lat or not d_lon:
-    st.error("Death CSV: Could not find latitude/longitude columns. Detected columns: " + ", ".join(df_death.columns.astype(str)))
+    st.error("CSV Death: Tak jumpa latitude/longitude. Kolum dikesan: " + ", ".join(df_death.columns.astype(str)))
     st.stop()
 
-# Diagnostics & flip
-st.sidebar.markdown("### Diagnostics — coordinate check")
-st.sidebar.write(f"Detected death lat column: **{d_lat}**")
-st.sidebar.write(f"Detected death lon column: **{d_lon}**")
+# Boleh flip coordinates jika dikesan salah
+st.sidebar.markdown("### Diagnostics — check koordinat")
+st.sidebar.write(f"Dikesan death lat column: **{d_lat}**")
+st.sidebar.write(f"Dikesan death lon column: **{d_lon}**")
 dlat_vals = pd.to_numeric(df_death[d_lat], errors="coerce")
 dlon_vals = pd.to_numeric(df_death[d_lon], errors="coerce")
 try:
-    st.sidebar.write("Death coords summary (min / mean / max):")
     st.sidebar.write({
         d_lat: (float(dlat_vals.min()), float(dlat_vals.mean()), float(dlat_vals.max())),
         d_lon: (float(dlon_vals.min()), float(dlon_vals.mean()), float(dlon_vals.max()))
@@ -117,29 +111,27 @@ except Exception:
     pass
 frac_lat_ok = dlat_vals.between(-90,90).mean()
 frac_lon_ok = dlon_vals.between(-180,180).mean()
-st.sidebar.write(f"Fraction {d_lat} in [-90,90]: **{frac_lat_ok:.2f}**")
-st.sidebar.write(f"Fraction {d_lon} in [-180,180]: **{frac_lon_ok:.2f}**")
 suspect_swap = (frac_lat_ok < 0.6 and frac_lon_ok < 0.6) or (dlat_vals.abs().mean() > dlon_vals.abs().mean() and dlon_vals.between(-90,90).mean() > 0.6)
 if suspect_swap:
-    st.sidebar.warning("Coordinates look suspicious (possible lat/lon swapped). Consider flipping.")
-flip_coords = st.sidebar.checkbox("Flip coordinates (use lon as lat, lat as lon)", value=False)
+    st.sidebar.warning("Koordinat pelik (mungkin lat/lon tersalah). Boleh cuba flip.")
+flip_coords = st.sidebar.checkbox("Flip coordinates (guna lon sebagai lat, lat sebagai lon)", value=False)
 if flip_coords:
     d_lat, d_lon = d_lon, d_lat
-    st.sidebar.success(f"Swapped temporarily for display. Now treating **{d_lat}** as latitude and **{d_lon}** as longitude.")
+    st.sidebar.success(f"Flip aktif. Sekarang guna **{d_lat}** sebagai latitude dan **{d_lon}** sebagai longitude.")
 
-# convert coords numeric & drop NA
+# Convert ke numeric & drop NA
 df_death[d_lat] = pd.to_numeric(df_death[d_lat], errors="coerce")
 df_death[d_lon] = pd.to_numeric(df_death[d_lon], errors="coerce")
 df_death = df_death.dropna(subset=[d_lat, d_lon])
 if df_death.empty:
-    st.error("After converting coordinates to numbers, no valid death points remain.")
+    st.error("Tiada death point valid selepas tukar ke nombor.")
     st.stop()
 
-# handle pumps if present
+# Handle pump data
 if df_pump is not None:
     p_lat, p_lon = find_latlon_cols(df_pump)
     if not p_lat or not p_lon:
-        st.sidebar.warning("Pump CSV uploaded but lat/lon columns not found — pumps will be ignored.")
+        st.sidebar.warning("Lat/lon untuk pump tak jumpa — data pump abaikan.")
         df_pump = None
     else:
         df_pump[p_lat] = pd.to_numeric(df_pump[p_lat], errors="coerce")
@@ -148,28 +140,24 @@ if df_pump is not None:
         if df_pump.empty:
             df_pump = None
 
-# center and map
+# Center map ikut death data
 center_lat = float(df_death[d_lat].mean())
 center_lon = float(df_death[d_lon].mean())
 
-# Build map with tiles=None so we control default and ensure HTTPS endpoints
+# Folium map, tiles HTTPS
 m = folium.Map(location=[center_lat, center_lon], zoom_start=15, control_scale=True, tiles=None)
-
-# HTTPS-safe basemaps (CartoDB Positron as default - clean)
 folium.TileLayer(
     tiles="https://cartodb-basemaps-a.global.ssl.fastly.net/light_all/{z}/{x}/{y}.png",
     name="Positron (light)",
     attr="© CartoDB © OpenStreetMap contributors",
     show=True
 ).add_to(m)
-
 folium.TileLayer(
     tiles="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
     attr="© OpenStreetMap contributors",
     name="OpenStreetMap",
     show=False
 ).add_to(m)
-
 folium.TileLayer(
     tiles="https://stamen-tiles.a.ssl.fastly.net/terrain/{z}/{x}/{y}.jpg",
     name="Stamen Terrain",
@@ -177,14 +165,10 @@ folium.TileLayer(
     show=False
 ).add_to(m)
 
-# overlays: deaths points
+# Overlay death point
 fg_deaths = folium.FeatureGroup(name="Deaths (points)", show=True)
 for _, r in df_death.iterrows():
-    popup_items = []
-    for c in df_death.columns:
-        if c in (d_lat, d_lon):
-            continue
-        popup_items.append(f"<b>{c}</b>: {r.get(c,'')}")
+    popup_items = [f"<b>{c}</b>: {r.get(c,'')}" for c in df_death.columns if c not in (d_lat, d_lon)]
     popup_html = "<br>".join(popup_items)
     folium.CircleMarker(
         location=[r[d_lat], r[d_lon]],
@@ -196,34 +180,28 @@ for _, r in df_death.iterrows():
     ).add_to(fg_deaths)
 fg_deaths.add_to(m)
 
-# heatmap overlay
+# Overlay heatmap death
 if len(df_death) >= 2:
     heat_data = df_death[[d_lat, d_lon]].values.tolist()
     HeatMap(heat_data, name="Heatmap (deaths)", radius=10, blur=6).add_to(m)
 
-# pumps overlay
+# Overlay pump marker
 if df_pump is not None:
-    p_lat, p_lon = find_latlon_cols(df_pump)
-    if p_lat and p_lon:
-        fg_pumps = folium.FeatureGroup(name="Pumps", show=True)
-        for _, r in df_pump.iterrows():
-            popup_items = []
-            for c in df_pump.columns:
-                if c in (p_lat, p_lon):
-                    continue
-                popup_items.append(f"<b>{c}</b>: {r.get(c,'')}")
-            popup_html = "<br>".join(popup_items)
-            folium.Marker(
-                location=[r[p_lat], r[p_lon]],
-                popup=folium.Popup(popup_html, max_width=300),
-                icon=folium.Icon(color="blue", icon="tint", prefix="fa")
-            ).add_to(fg_pumps)
-        fg_pumps.add_to(m)
+    fg_pumps = folium.FeatureGroup(name="Pumps", show=True)
+    for _, r in df_pump.iterrows():
+        popup_items = [f"<b>{c}</b>: {r.get(c,'')}" for c in df_pump.columns if c not in (p_lat, p_lon)]
+        popup_html = "<br>".join(popup_items)
+        folium.Marker(
+            location=[r[p_lat], r[p_lon]],
+            popup=folium.Popup(popup_html, max_width=300),
+            icon=folium.Icon(color="blue", icon="tint", prefix="fa")
+        ).add_to(fg_pumps)
+    fg_pumps.add_to(m)
 
-# add LayerControl
+# Layer control (toggle)
 folium.LayerControl(position="topright", collapsed=False).add_to(m)
 
-# add legend (HTML) using branca template
+# Legend custom gaya HTML
 legend_html = """
 {% macro html(this, kwargs) %}
 <div style="
@@ -238,8 +216,8 @@ legend_html = """
     font-size:12px;
 ">
 <b>Legend</b><br>
-<span style="background:#ff0000;border-radius:50%;display:inline-block;width:12px;height:12px;margin-right:6px;box-shadow:0 0 8px rgba(0,0,255,0.6)"></span> Death points / Heat<br>
-<span style="color:blue; margin-left:2px;">&#9679;</span> Pump location (blue marker)<br>
+<span style="background:#ff0000;border-radius:50%;display:inline-block;width:12px;height:12px;margin-right:6px;box-shadow:0 0 8px rgba(0,0,255,0.6)"></span> Death<br>
+<span style="color:blue; margin-left:2px;">●</span> Pump<br>
 </div>
 {% endmacro %}
 """
@@ -247,7 +225,7 @@ macro = MacroElement()
 macro._template = Template(legend_html)
 m.get_root().add_child(macro)
 
-# auto-fit to data bounds
+# Fit map to all data
 try:
     bounds = [
         [float(df_death[d_lat].min()), float(df_death[d_lon].min())],
@@ -257,16 +235,17 @@ try:
 except Exception:
     pass
 
-# show map
+# Preview di Streamlit
 st.subheader("Map preview")
-st.write("Toggle layers using the 'Layers' control on the map.")
+st.write("Layer boleh toggle atas peta. Kalau tiada paparan, cuba refresh atau tukar browser.")
 st_data = st_folium(m, width=1000, height=650)
 
-# data previews
+# Preview data table
 with st.expander("Preview death data"):
     st.dataframe(df_death.reset_index(drop=True))
 if df_pump is not None:
     with st.expander("Preview pump data"):
         st.dataframe(df_pump.reset_index(drop=True))
 
-st.caption("If your CSV lacks coordinate columns, add lat/lon (or X coordinate / Y coordinate) before uploading. Use the Diagnostics sidebar to verify and flip coordinates if needed.")
+st.caption("Jika CSV anda tiada lat/lon, tambah dulu kolum ini sebelum upload. Sidebar boleh validasi/flip koordinat.")
+
