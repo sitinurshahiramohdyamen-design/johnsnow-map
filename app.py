@@ -45,8 +45,7 @@ def find_latlon_cols(df):
                 lon_in_lon_range = lon_vals.between(-180, 180).mean()
                 lat_in_lon_range = lat_vals.between(-180, 180).mean()
                 lon_in_lat_range = lon_vals.between(-90, 90).mean()
-                # if the detected lat column mostly falls outside [-90,90] but the "lon" column mostly falls inside [-90,90],
-                # then they might be swapped.
+                # if detected lat mostly outside lat range but detected lon mostly inside lat range -> swapped
                 if (lat_in_lat_range < 0.6 and lon_in_lat_range > 0.6) or (lat_in_lat_range < lon_in_lat_range and lon_in_lat_range > 0.6):
                     return lon, lat
         except Exception:
@@ -137,7 +136,6 @@ try:
         d_lon: (float(dlon_vals.min()), float(dlon_vals.mean()), float(dlon_vals.max())),
     })
 except Exception:
-    # in case casting to float fails, skip
     pass
 
 # fraction inside reasonable ranges
@@ -171,9 +169,6 @@ if df_pump is not None:
         st.sidebar.warning("Pump CSV uploaded but lat/lon columns not found — pumps will be ignored.")
         df_pump = None
     else:
-        if flip_coords:
-            # if user flipped death coords, do NOT automatically flip pumps; show separate flip if needed
-            pass
         df_pump[p_lat] = pd.to_numeric(df_pump[p_lat], errors="coerce")
         df_pump[p_lon] = pd.to_numeric(df_pump[p_lon], errors="coerce")
         df_pump = df_pump.dropna(subset=[p_lat, p_lon])
@@ -187,27 +182,28 @@ center_lon = float(df_death[d_lon].mean())
 # Build folium map with explicit base layers (tiles=None so we control default)
 m = folium.Map(location=[center_lat, center_lon], zoom_start=16, control_scale=True, tiles=None)
 
-# OpenStreetMap as default visible basemap
+# ===== HTTPS-safe basemaps (fixes Streamlit tile-blocking) =====
 folium.TileLayer(
-    tiles="OpenStreetMap",
+    tiles="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    attr="© OpenStreetMap contributors",
     name="OpenStreetMap",
     show=True
 ).add_to(m)
 
-# Stamen Terrain optional layer with attribution
 folium.TileLayer(
-    tiles="Stamen Terrain",
-    name="Stamen Terrain",
-    attr="Map tiles by Stamen Design, under CC BY 3.0. Data by OpenStreetMap contributors",
+    tiles="https://cartodb-basemaps-a.global.ssl.fastly.net/light_all/{z}/{x}/{y}.png",
+    name="Positron (light)",
+    attr="© CartoDB © OpenStreetMap contributors",
     show=False
 ).add_to(m)
 
-# Positron (light) optional
 folium.TileLayer(
-    tiles="CartoDB positron",
-    name="Positron (light)",
+    tiles="https://stamen-tiles.a.ssl.fastly.net/terrain/{z}/{x}/{y}.jpg",
+    name="Stamen Terrain",
+    attr="Map tiles by Stamen Design — © OpenStreetMap contributors",
     show=False
 ).add_to(m)
+# ===============================================================
 
 # --- overlays: deaths (points) ---
 fg_deaths = folium.FeatureGroup(name="Deaths (points)", show=True)
@@ -253,7 +249,7 @@ if df_pump is not None:
             ).add_to(fg_pumps)
         fg_pumps.add_to(m)
 
-# add layer control
+# add layer control (shows base layers as radio buttons and overlays as checkboxes)
 folium.LayerControl(position="topright", collapsed=False).add_to(m)
 
 # fit map to bounds of data (safe-guard)
