@@ -161,6 +161,38 @@ if df_pump is not None:
 center_lat = float(df_death[d_lat].mean())
 center_lon = float(df_death[d_lon].mean())
 
+# --- Diagnostics (show to user so we can verify coordinate columns) ---
+st.sidebar.markdown("### Diagnostics — coordinate check")
+st.sidebar.write(f"Detected death lat column: **{d_lat}**")
+st.sidebar.write(f"Detected death lon column: **{d_lon}**")
+
+# compute simple stats
+dlat_vals = pd.to_numeric(df_death[d_lat], errors="coerce")
+dlon_vals = pd.to_numeric(df_death[d_lon], errors="coerce")
+st.sidebar.write("Death coords summary (min / mean / max):")
+st.sidebar.write({
+    d_lat: (float(dlat_vals.min()), float(dlat_vals.mean()), float(dlat_vals.max())),
+    d_lon: (float(dlon_vals.min()), float(dlon_vals.mean()), float(dlon_vals.max())),
+})
+
+# fractions inside expected ranges
+frac_lat_ok = dlat_vals.between(-90,90).mean()
+frac_lon_ok = dlon_vals.between(-180,180).mean()
+st.sidebar.write(f"Fraction {d_lat} in [-90,90]: **{frac_lat_ok:.2f}**")
+st.sidebar.write(f"Fraction {d_lon} in [-180,180]: **{frac_lon_ok:.2f}**")
+
+# Auto-suggest swap if suspicious
+suspect_swap = (frac_lat_ok < 0.6 and frac_lon_ok < 0.6) or (dlat_vals.abs().mean() > dlon_vals.abs().mean() and dlon_vals.between(-90,90).mean() > 0.6)
+if suspect_swap:
+    st.sidebar.warning("Coordinates look suspicious (possible lat/lon swapped). Consider flipping.")
+
+flip_coords = st.sidebar.checkbox("Flip coordinates (use lon as lat, lat as lon)", value=False)
+if flip_coords:
+    # swap names for plotting only (do NOT modify original DF on disk)
+    d_lat, d_lon = d_lon, d_lat
+    st.sidebar.success(f"Swapped. Now treating {d_lat} as lat and {d_lon} as lon.")
+
+
 # build folium map
 m = folium.Map(location=[center_lat, center_lon], zoom_start=16, control_scale=True)
 
@@ -239,3 +271,4 @@ if df_pump is not None:
         st.dataframe(df_pump)
 
 st.caption("If your CSV lacks coordinate columns, you'll need to add lat/lon (or X coordinate / Y coordinate) before uploading.")
+
